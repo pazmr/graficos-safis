@@ -1,0 +1,16 @@
+name: "Maximiliano Paz"
+output_dir: "."
+navbar:
+  title: "Maximiliano Paz"
+  left:
+    - text: "Exploracion de Datos"
+      href: exploracion.html
+    - 
+  right:
+    - icon: fa-envelope fa-lg
+      href: contact.html
+    - 
+output:
+  html_document:
+    theme: paper
+    css: 'styles.css'
