@@ -1,12 +1,112 @@
 ---
-title: "exploracion"
+title: "Exploracion"
 author: "Maximiliano Paz"
 date: "April 7, 2019"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, out.width = "100%")
+library("readxl")
+library(plyr)
+library("dplyr")
+library("ggplot2")
+library(ggthemes)
+library(gridExtra)
+library(plotly)
+filenames <- list.files(path="D:/Analisis inversiones/Fondos financieros/3-2019/", pattern="*.xls", full.names=TRUE, recursive=FALSE)
+
+mydata <- ldply(filenames, function(filename) {
+  dum = read_xls(filename, skip=7, sheet = 1)
+  
+  #If you want to add the filename as well on the column
+  
+  dum$filename = filename
+  #dum$rend_diario = (dum$`Valor Cuota`[2:n, 1] - dum$`Valor Cuota`[1:(n-1), 1])/ dum$`Valor Cuota`[1:(n-1), 1]*100
+  
+  return(dum)
+})
+
+#read codes
+
+abrev <- read_xls("D:/Analisis inversiones/Fondos financieros/codigos.xls", sheet = 1)
+administradoras <- read_xls("D:/Analisis inversiones/Fondos financieros/codigos.xls", sheet = 2)
+abrev <- merge(x = abrev, y = administradoras, by = "Serie", all.x=TRUE)
+
+# rend_diario = (`Valor Cuota`[2:n_EAF, 1] - `Valor Cuota`[1:(n_EAF-1), 1])/ `Valor Cuota`[1:(n_EAF-1), 1]*100 
+#finalDF <- subset(mydata, FALSE)
+
+calc_rendimientos <- function(DF) {
+  lista_series <- unique(DF$Serie)
+  
+  finalDF <- subset(mydata, FALSE)
+  finalDF$fecha_real <- as.Date(character())
+  finalDF$rend_diario <- numeric()
+  finalDF$rend_mes <- numeric()
+  
+  for (serie in lista_series) {
+    tempDF<- mydata %>% filter(Serie == serie) %>% mutate(fecha_real = as.Date(Fecha))
+    n_serie <-  length(tempDF%>%.$`Valor Cuota`)
+   
+    rend_dia <- (tempDF$`Valor Cuota`[1:(n_serie-1)] - tempDF$`Valor Cuota`[2:(n_serie)])/tempDF$`Valor Cuota`[2:(n_serie)]*100
+    rend_dia <- c(rend_dia,0)
+    rend_mes <- (tempDF$`Valor Cuota`[1:(n_serie-30)]- tempDF$`Valor Cuota`[31:(n_serie)])/tempDF$`Valor Cuota`[31:(n_serie)]*100 
+    
+    rend_mes <- c(rend_mes, vector(mode="numeric", length=30))
+    min_value <- min(c(n_serie-2,360))
+    rend_anual <- (tempDF$`Valor Cuota`[1:(n_serie-min_value)]- tempDF$`Valor Cuota`[(min_value+1):(n_serie)])/tempDF$`Valor Cuota`[(min_value+1):(n_serie)]*100 
+    
+    rend_anual <- c(rend_anual, vector(mode="numeric", length=min_value))
+    
+    tempDF <- tempDF %>% mutate(rend_diario = rend_dia, rend_mes = rend_mes, rend_ano = rend_anual)
+    #rm(finalDF)
+    #print(tail(tempDF,5))
+    finalDF <- rbind(finalDF, tempDF)
+    
+  }
+  return(finalDF)
+}
+finalData <- calc_rendimientos(mydata)
+finalData<- merge(x = finalData, y = abrev, by = "Serie", all.x=TRUE)
+finalData<- finalData %>% arrange(Serie, fecha_real)
+finalData$Administradora = reorder(finalData$Administradora, -finalData$rend_ano, mean)
+finalData$Serie = reorder(finalData$Serie, -finalData$rend_ano, mean)
+#EAF <- finalData %>% filter(Serie == "EAF", fecha_real > "2018-11-30" )
+#graph <- EAF %>% ggplot(aes(x = fecha_real, y = rend_mes) ) +  geom_point()
+#graph
+#multiple plots
+#boxplot
+# reordered by mean value
+box <- finalData %>% filter(fecha_real > "2018-01-01" &  !is.na(rend_ano) & `Fondo tipo`== "Abierto") %>%  ggplot(aes(Serie, rend_ano, fill = Administradora)) + geom_boxplot(outlier.shape = NA) +stat_boxplot(geom ='errorbar', width = 0.7)+ facet_grid(~Administradora, scales = "free_x", space = "free") + theme( axis.text = element_text( size = 8 ), axis.text.x = element_text(angle = 90), strip.text.x = element_text(size = 8))  #coord_cartesian(ylim = c(-2, 2.6))+
+#fix letters
+#box <- box + scale_y_continuous(trans = "log")
+box2 <- finalData %>% filter(fecha_real > "2018-01-01" &  !is.na(`Tasa Últimos 360 Días`) & `Fondo tipo`== "Abierto") %>%  ggplot(aes(Serie, `Tasa Últimos 360 Días`, fill = Administradora)) + geom_boxplot(outlier.shape = NA) +stat_boxplot(geom ='errorbar', width = 0.7)+ facet_grid(~Administradora, scales = "free_x", space = "free") #+  theme_economist()  #coord_cartesian(ylim = c(-2, 2.6))+ 
+#box
+#box <- box + theme(axis.text = element_text(angle = 90, hjust = 1)) + xlab("")
+#scale to log2 for y para ver mejor los graficos
+#multiplot(box, box2 , cols=1)
+ranking_rend <- finalData %>%  filter(`Fondo tipo`== "Abierto" & fecha_real > "2018-01-01") %>% group_by(Administradora, Serie, Fondo) %>% summarize(rend_avg_30 = mean(`Tasa Últimos 360 Días`, na.rm=TRUE), dev_st_30 = sd(`Tasa Últimos 360 Días`), rend_avg_360 = mean(`Tasa Últimos 360 Días`, na.rm=TRUE), dev_st_360 = sd(`Tasa Últimos 360 Días`) , avg_pop = last(Participantes) ) %>% arrange(desc(avg_pop))
+#ranking_rend
+
+plot_risk <- ranking_rend %>% ggplot(aes(dev_st_360, rend_avg_360, colour= Administradora, size = avg_pop, group = 1,
+                                         text = paste("Serie: ", Serie,
+                                                      "<br>Fondo: ", Fondo,
+                                                      "<br>Administradora: ", Administradora,
+                                                      "<br>Participantes: ", avg_pop,
+                                                      "<br>Rendimiento anual: %", round(rend_avg_360,2)
+                                                      ))) +  geom_point() + scale_x_continuous(trans = "log2") #+theme_economist() + geom_text(aes(label=Serie),hjust=-1, vjust=-2)
+leyenda <- list(
+  font = list(
+    family = "sans-serif",
+    size = 8,
+    color = "#000"),
+  bgcolor = "#E2E2E2",
+  bordercolor = "#FFFFFF",
+  borderwidth = 2,
+  orientation = 'h',
+  xanchor = "center", 
+  y= -.2)
+
 ```
 
 ## R Markdown
@@ -15,16 +115,17 @@ This is an R Markdown document. Markdown is a simple formatting syntax for autho
 
 When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
-```{r cars}
-summary(cars)
-```
+```{r box}
+ggplotly(box) %>% layout(legend = leyenda)
 
+```
+  ```
 ## Including Plots
 
 You can also embed plots, for example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r plot_risk, echo=FALSE}
+ggplotly(plot_risk, tooltip = "text")
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
